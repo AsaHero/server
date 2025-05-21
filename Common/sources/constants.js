@@ -58,14 +58,15 @@ exports.RIGHTS = {
   Edit    : 1,
   Review  : 2,
   Comment : 3,
-  View    : 4
+  View    : 4,
 };
 
 exports.LICENSE_MODE = {
   None: 0,
   Trial: 1,
   Developer: 2,
-  Limited: 4
+  Limited: 4,
+  Unlimited: 8
 };
 
 exports.LICENSE_RESULT = {
@@ -87,6 +88,7 @@ exports.LICENSE_RESULT = {
   NotBefore: 16
 };
 
+exports.LICENSE_UNLIMITED = 9999;
 exports.LICENSE_CONNECTIONS = 20;
 exports.LICENSE_USERS = 3;
 exports.LICENSE_EXPIRE_USERS_ONE_DAY = 24 * 60 * 60; // day in seconds

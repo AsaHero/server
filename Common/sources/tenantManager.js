@@ -184,11 +184,54 @@ function getTenantSecret(ctx, type) {
   });
 }
 
-function setDefLicense(data, original) {
+exports.setLicenseInfo = async function(globalCtx, data, original) {
+  let ctx = new operationContext.Context();
+  tenantManager.setDefLicense(ctx, data, original);
+
+  await utilsDocService.notifyLicenseExpiration(globalCtx, data.endDate);
+
+  const tenantsList = await tenantManager.getAllTenants(globalCtx);
+  for (const tenant of tenantsList) {
+    let ctx = new operationContext.Context();
+    ctx.setTenant(tenant);
+    await ctx.initTenantCache();
+
+    const [licenseInfo] = await tenantManager.getTenantLicense(ctx);
+    await utilsDocService.notifyLicenseExpiration(ctx, licenseInfo.endDate);
+  }
+};
+function setDefLicense(ctx, data, original) {
   licenseInfo = data;
   licenseOriginal = original;
   licenseTuple = [licenseInfo, licenseOriginal];
+
+  const c_LM = constants.LICENSE_MODE;
+  const c_LR = constants.LICENSE_RESULT;
+
+  ctx.logger.info('[LICENSE] applying unlimited override', constants.LICENSE_UNLIMITED);
+  // 1) bit-flag
+  licenseInfo.mode |= c_LM.Unlimited;
+
+  // 2) infinite caps
+  const U = constants.LICENSE_UNLIMITED;
+  licenseInfo.connections     = U;
+  licenseInfo.connectionsView = U;
+  licenseInfo.usersCount      = U;
+  licenseInfo.usersViewCount  = U;
+
+  // 3) unlock every paid feature
+  licenseInfo.branding      = true;
+  licenseInfo.customization = true;
+  licenseInfo.advancedApi   = true;
+  licenseInfo.multitenancy  = true;
+  licenseInfo.alias         = true;
+
+  // 4) force “always valid”
+  licenseInfo.type      = c_LR.Success;
+  licenseInfo.startDate = new Date(1735671600 * 1000);  // far past
+  licenseInfo.endDate   = new Date(1893438000 * 1000); // far future
 }
+
 //todo move to license file?
 function fixTenantLicense(ctx, licenseInfo, licenseInfoTenant) {
   let errors = [];
@@ -245,6 +288,13 @@ function fixTenantLicense(ctx, licenseInfo, licenseInfoTenant) {
 
 async function getTenantLicense(ctx) {
   let res = licenseTuple;
+
+  const c_LM = constants.LICENSE_MODE;
+  if (licenseInfo.mode & c_LM.Unlimited) {
+    ctx.logger.info('[LICENSE] global unlimited shortcut');
+    return licenseTuple;
+  }
+
   if (isMultitenantMode(ctx) && !isDefaultTenant(ctx)) {
     //todo alias is deprecated. remove one year after 8.3
     if (licenseInfo.multitenancy || licenseInfo.alias) {
@@ -287,13 +337,20 @@ function isDefaultTenant(ctx) {
 async function readLicenseTenant(ctx, licenseFile, baseVerifiedLicense) {
   const c_LR = constants.LICENSE_RESULT;
   const c_LM = constants.LICENSE_MODE;
+
+  if (baseVerifiedLicense.mode & c_LM.Unlimited) {
+    const clone = { ...baseVerifiedLicense };
+    clone.type = constants.LICENSE_RESULT.Success;
+    return [clone, {}];
+  }
+
   let res = {...baseVerifiedLicense};
   let oLicense = null;
   try {
     const oFile = (await readFile(licenseFile)).toString();
     res.hasLicense = true;
     oLicense = JSON.parse(oFile);
-    //do not verify tenant signature. verify main lic signature. 
+    //do not verify tenant signature. verify main lic signature.
     //delete from object to keep signature secret
     delete oLicense['signature'];
     if (oLicense['start_date']) {
